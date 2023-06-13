@@ -50,3 +50,9 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+Offline 1 (Shell Script)/Match
+Offline 1 (Shell Script)/Workspace/answers
+Offline 1 (Shell Script)/Workspace/tests
+
+*.Identifier
