@@ -15,6 +15,25 @@ unzip_submissions() {
     done
 }
 
+relocate_code_file() {
+    target_dir="$2"
+    target_dir+="$4"
+    target_dir+="$3"
+    # echo "$target_dir"
+    mkdir -p "$target_dir"
+    cp "$1" "$target_dir"
+
+    if [ "$filename" != "$5" ] 
+    then
+        target_file="$target_dir"
+        target_file+="/"
+        new_target_file="$target_file"
+        target_file+="$filename"
+        new_target_file+="$5"
+        mv "$target_file" "$new_target_file"
+    fi
+}
+
 visit()
 {
 	if [ -d "$1" ]
@@ -39,23 +58,13 @@ visit()
         
         if [ "$extension" = "c" ] 
         then
-            target_dir="$2"
-            target_dir+="/C/"
-            target_dir+="$3"
-            # echo "$target_dir"
-            mkdir -p "$target_dir"
-            cp "$1" "$target_dir"
-
-            if [ "$filename" != "main.c" ] 
-            then
-                target_file="$target_dir"
-                target_file+="/"
-                new_target_file="$target_file"
-                target_file+="$filename"
-                new_target_file+="main.c"
-                mv "$target_file" "$new_target_file"
-            fi
-
+            relocate_code_file "$1" "$2" "$3" "/C/" "main.c"
+        elif [ "$extension" = "java" ] 
+        then
+            relocate_code_file "$1" "$2" "$3" "/Java/" "Main.java"
+        elif [ "$extension" = "py" ] 
+        then
+            relocate_code_file "$1" "$2" "$3" "/Python/" "main.py"
         fi
 
 	fi
