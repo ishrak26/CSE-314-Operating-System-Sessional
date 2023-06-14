@@ -56,3 +56,6 @@ Offline 1 (Shell Script)/Workspace/answers
 Offline 1 (Shell Script)/Workspace/tests
 
 *.Identifier
+
+Offline 1 (Shell Script)/Workspace/submissions
+!Offline 1 (Shell Script)/Workspace/submissions/*.zip
