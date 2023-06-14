@@ -54,6 +54,7 @@ dkms.conf
 Offline 1 (Shell Script)/Match
 Offline 1 (Shell Script)/Workspace/answers
 Offline 1 (Shell Script)/Workspace/tests
+Offline 1 (Shell Script)/Workspace/target
 
 *.Identifier
 
