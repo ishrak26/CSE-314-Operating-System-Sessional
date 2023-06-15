@@ -6,9 +6,9 @@ unzip_submissions() {
     do
         if [ -f "$i" ] && [[ "$i" = *.zip ]]
         then
-            echo "filename is $i"
+            # echo "filename is $i"
             dirname=${i::-4}
-            echo "dirname is $dirname"
+            # echo "dirname is $dirname"
             mkdir -p "$dirname"
             unzip -o "$i" -d "$dirname"
         fi
@@ -85,6 +85,83 @@ organize_files() {
     done
 }
 
+run_tests() {
+    for i in "$2"/*
+    do
+        if [ -f "$i" ] && [[ "$i" = *.txt ]]
+        then
+            dir=$(dirname "$1")
+            cmd="$1"
+            cmd+=" < "
+            cmd+="$i"
+            cmd+=" > "
+            cmd+="$dir"
+            cmd+="/out"
+            num=$(basename "$i")
+            num=${num:4}
+            cmd+="$num"
+            # echo "$cmd"
+            eval " $cmd"
+        fi
+    done
+}
+
+execute_C_file() {
+    for i in "$1"/*
+    do
+        if [ -d "$i" ]
+        then
+            sid=$(basename "$i")
+            file_name="$i"
+            executable_name="$i"
+            file_name+="/main.c"
+            executable_name+="/main.out"
+            
+            # compile
+            gcc "$file_name" -o "$executable_name"
+
+            # run the executables
+            run_tests "$executable_name" "$2"
+        fi
+    done
+}
+
+execute_Java_file() {
+    for i in "$1"/*
+    do
+        if [ -d "$i" ]
+        then
+            sid=$(basename "$i")
+            file_name="$i"
+            file_name+="/Main.java"
+            javac "$file_name"
+        fi
+    done
+}
+
+execute_files() {
+    for i in "$1"/*
+    do
+        if [ -d "$i" ]
+        then
+            
+            dir=$(basename "$i")
+            # echo "dir is ${dir}"
+            case "$dir" in
+                "C") 
+                    execute_C_file "$i" "$2";;
+                "Java") 
+                    execute_Java_file "$i";;
+                "Python") 
+                    echo "Can't understand.";;
+            esac
+            
+        fi
+    done
+}
+
 unzip_submissions "$1"
 
 organize_files "$1" "$2"
+
+execute_files "$2" "$3"
