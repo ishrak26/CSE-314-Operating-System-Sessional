@@ -186,6 +186,8 @@ match_files() {
                 if [ -d "$j" ] 
                 then
                     sid=$(basename "$j")
+                    matched=0
+                    unmatched=0
                     for k in "$j"/*
                     do
                         if [ -f "$k" ] && [[ "$k" = *.txt ]]
@@ -196,10 +198,13 @@ match_files() {
                             dif=$(diff "$k" "$ans_file")
                             if [ "$dif" != "" ]
                             then
-                                echo "unmatched"
+                                unmatched=$((unmatched+1))
+                            else 
+                                matched=$((matched+1))
                             fi
                         fi
                     done
+                    echo "${sid},${language},${matched},${unmatched}" >> "$3"
                 fi
             done
             
@@ -213,4 +218,7 @@ organize_files "$1" "$2"
 
 execute_files "$2" "$3"
 
-match_files "$2" "$4"
+csv_path="target/results.csv"
+echo "student_id,type,matched,not_matched" > "$csv_path"
+
+match_files "$2" "$4" "$csv_path"
