@@ -90,16 +90,9 @@ run_tests() {
     do
         if [ -f "$i" ] && [[ "$i" = *.txt ]]
         then
-            dir=$(dirname "$1")
-            cmd="$1"
-            cmd+=" < "
-            cmd+="$i"
-            cmd+=" > "
-            cmd+="$dir"
-            cmd+="/out"
             num=$(basename "$i")
             num=${num:4}
-            cmd+="$num"
+            cmd="${3} < ${i} > ${1}/out${num}"
             # echo "$cmd"
             eval " $cmd"
         fi
@@ -112,16 +105,16 @@ execute_C_file() {
         if [ -d "$i" ]
         then
             sid=$(basename "$i")
-            file_name="$i"
-            executable_name="$i"
-            file_name+="/main.c"
-            executable_name+="/main.out"
+            file_name="${i}/main.c"
+            executable_name="${i}/main.out"
             
             # compile
             gcc "$file_name" -o "$executable_name"
 
             # run the executables
-            run_tests "$executable_name" "$2"
+            dir=$(dirname "$file_name")
+            cmd="${executable_name}"
+            run_tests "$dir" "$2" "$cmd"
         fi
     done
 }
@@ -132,9 +125,32 @@ execute_Java_file() {
         if [ -d "$i" ]
         then
             sid=$(basename "$i")
-            file_name="$i"
-            file_name+="/Main.java"
+            file_name="${i}/Main.java"
+            executable_name="${i}/Main"
+            
+            # compile
             javac "$file_name"
+
+            # run the executables
+            dir=$(dirname "$file_name")
+            cmd="java -cp ${dir} Main"
+            run_tests "$dir" "$2" "$cmd"
+        fi
+    done
+}
+
+execute_Python_file() {
+    for i in "$1"/*
+    do
+        if [ -d "$i" ]
+        then
+            sid=$(basename "$i")
+            file_name="${i}/main.py"
+
+            # run the executables
+            dir=$(dirname "$file_name")
+            cmd="python3 ${file_name}"
+            run_tests "$dir" "$2" "$cmd"
         fi
     done
 }
@@ -151,9 +167,9 @@ execute_files() {
                 "C") 
                     execute_C_file "$i" "$2";;
                 "Java") 
-                    execute_Java_file "$i";;
+                    execute_Java_file "$i" "$2";;
                 "Python") 
-                    echo "Can't understand.";;
+                    execute_Python_file "$i" "$2";;
             esac
             
         fi
