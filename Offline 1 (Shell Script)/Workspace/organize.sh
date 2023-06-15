@@ -10,26 +10,26 @@ unzip_submissions() {
             dirname=${i::-4}
             # echo "dirname is $dirname"
             mkdir -p "$dirname"
-            unzip -o "$i" -d "$dirname"
+            unzip -oq "$i" -d "$dirname"
         fi
     done
 }
 
 relocate_code_file() {
-    target_dir="$2"
-    target_dir+="$4"
-    target_dir+="$3"
+    target_dir="${2}${4}${3}"
+    # target_dir+="$4"
+    # target_dir+="$3"
     # echo "$target_dir"
     mkdir -p "$target_dir"
     cp "$1" "$target_dir"
 
     if [ "$filename" != "$5" ] 
     then
-        target_file="$target_dir"
-        target_file+="/"
-        new_target_file="$target_file"
+        target_file="${target_dir}/"
+        # target_file+="/"
+        new_target_file="${target_file}${5}"
         target_file+="$filename"
-        new_target_file+="$5"
+        # new_target_file+="$5"
         mv "$target_file" "$new_target_file"
     fi
 }
@@ -126,7 +126,6 @@ execute_Java_file() {
         then
             sid=$(basename "$i")
             file_name="${i}/Main.java"
-            executable_name="${i}/Main"
             
             # compile
             javac "$file_name"
@@ -176,8 +175,42 @@ execute_files() {
     done
 }
 
+match_files() {
+    for i in "$1"/*
+    do
+        if [ -d "$i" ]
+        then
+            language=$(basename "$i")
+            for j in "$i"/*
+            do
+                if [ -d "$j" ] 
+                then
+                    sid=$(basename "$j")
+                    for k in "$j"/*
+                    do
+                        if [ -f "$k" ] && [[ "$k" = *.txt ]]
+                        then
+                            num=$(basename "$k")
+                            num=${num:3}
+                            ans_file="${2}/ans${num}"
+                            dif=$(diff "$k" "$ans_file")
+                            if [ "$dif" != "" ]
+                            then
+                                echo "unmatched"
+                            fi
+                        fi
+                    done
+                fi
+            done
+            
+        fi
+    done
+}
+
 unzip_submissions "$1"
 
 organize_files "$1" "$2"
 
 execute_files "$2" "$3"
+
+match_files "$2" "$4"
