@@ -9,20 +9,30 @@ unzip_submissions() {
     do
         if [ -f "$i" ] && [[ "$i" = *.zip ]]
         then
-            dirname=${i::-4}
+            dirname=${i::-4} # create a folder and then unzip there to avoid messy extraction
             mkdir -p "$dirname"
-            unzip -oq "$i" -d "$dirname"
+            unzip -oq "$i" -d "$dirname" # unzip quietly
         fi
     done
 }
 
 relocate_code_file() {
-    target_dir="${2}${4}${3}"
+    # $1 is code filepath
+    # $2 is target directory
+    # $3 is student_id
+    # $4 is "C" or "Java" or "Python"
+    # $5 is updated filename
+    # $6 is curremt filename
+    
+    target_dir="${2}/${4}/${3}"
     mkdir -p "$target_dir"
     cp "$1" "$target_dir"
 
+    filename="$6"
+
     if [ "$filename" != "$5" ] 
     then
+        # rename file
         target_file="${target_dir}/"
         new_target_file="${target_file}${5}"
         target_file+="$filename"
@@ -32,12 +42,16 @@ relocate_code_file() {
 
 visit()
 {
-	if [ -d "$1" ]
+	# $1 is current directory
+    # $2 is target directory
+    # $3 is student_id
+    
+    if [ -d "$1" ]
 	then
 	
 		for i in "$1"/*
 		do
-			visit "$i" "$2" "$3"
+			visit "$i" "$2" "$3" # recursively try to find the code file
 		done
 	
 	elif [ -f "$1" ] && { [[ "$1" = *.c ]] || [[ "$1" = *.java ]] || [[ "$1" = *.py ]]; }
@@ -49,19 +63,22 @@ visit()
         
         if [ "$extension" = "c" ] 
         then
-            relocate_code_file "$1" "$2" "$3" "/C/" "main.c"
+            relocate_code_file "$1" "$2" "$3" "C" "main.c" "$filename"
         elif [ "$extension" = "java" ] 
         then
-            relocate_code_file "$1" "$2" "$3" "/Java/" "Main.java"
+            relocate_code_file "$1" "$2" "$3" "Java" "Main.java" "$filename"
         elif [ "$extension" = "py" ] 
         then
-            relocate_code_file "$1" "$2" "$3" "/Python/" "main.py"
+            relocate_code_file "$1" "$2" "$3" "Python" "main.py" "$filename"
         fi
 
 	fi
 }
 
 organize_files() {
+    # $1 is submissions folder
+    # $2 is target folder
+    
     mkdir -p "${2}/C"
     mkdir -p "${2}/Java"
     mkdir -p "${2}/Python"
@@ -70,7 +87,7 @@ organize_files() {
     do
         if [ -d "$i" ]
         then
-           sid=${i: -7} # last 7 characters 
+           sid=${i: -7} # last 7 characters
            if [ $verbose_flag == "true" ]
            then
                 echo "Organizing files of ${sid}"
@@ -81,12 +98,17 @@ organize_files() {
 }
 
 run_tests() {
+    # $1 is directory path of code file
+    # $2 is tests directory
+    # $3 is command to execute
+    
     for i in "$2"/*
     do
         if [ -f "$i" ] && [[ "$i" = *.txt ]]
         then
-            num=$(basename "$i")
-            num=${num:4}
+            # $i is a input file
+            num=$(basename "$i") 
+            num=${num:4} # test number
             cmd="${3} < ${i} > ${1}/out${num}"
             eval " $cmd"
         fi
@@ -94,6 +116,9 @@ run_tests() {
 }
 
 execute_C_file() {
+    # $1 is C directory
+    # $2 is tests directory
+    
     for i in "$1"/*
     do
         if [ -d "$i" ]
@@ -119,6 +144,9 @@ execute_C_file() {
 }
 
 execute_Java_file() {
+    # $1 is Java directory
+    # $2 is tests directory
+    
     for i in "$1"/*
     do
         if [ -d "$i" ]
@@ -143,6 +171,9 @@ execute_Java_file() {
 }
 
 execute_Python_file() {
+    # $1 is Python directory
+    # $2 is tests directory
+    
     for i in "$1"/*
     do
         if [ -d "$i" ]
@@ -164,6 +195,9 @@ execute_Python_file() {
 }
 
 execute_files() {
+    # $1 is target directory
+    # $2 is tests directory
+    
     for i in "$1"/*
     do
         if [ -d "$i" ]
@@ -183,12 +217,17 @@ execute_files() {
     done
 }
 
+# diff to find if output matches with answers
 match_files() {
+    # $1 is target directory where the output files are located
+    # $2 is answers directory
+    # $3 is csv filepath
+    
     for i in "$1"/*
     do
         if [ -d "$i" ]
         then
-            language=$(basename "$i")
+            language=$(basename "$i") # C or Java or python
             for j in "$i"/*
             do
                 if [ -d "$j" ] 
@@ -201,7 +240,7 @@ match_files() {
                         if [ -f "$k" ] && [[ "$k" = *.txt ]]
                         then
                             num=$(basename "$k")
-                            num=${num:3}
+                            num=${num:3} # output number
                             ans_file="${2}/ans${num}"
                             dif=$(diff "$k" "$ans_file")
                             if [ "$dif" != "" ]
@@ -212,7 +251,10 @@ match_files() {
                             fi
                         fi
                     done
+
+                    # write in csv
                     echo "${sid},${language},${matched},${unmatched}" >> "$3"
+
                 fi
             done
             
@@ -221,6 +263,8 @@ match_files() {
 }
 
 count_test_files() {
+    # $1 is tests directory
+    
     cnt=0
     for i in "$1"/*
     do
@@ -232,11 +276,7 @@ count_test_files() {
     echo "Found ${cnt} test files"
 }
 
-check_usage() {
-    echo ""
-}
-
-# Loop through the command-line arguments
+# Loop through the command-line arguments to check for switches
 i=1
 for arg in "$@"; do
     if [ "$i" -gt 4 ] 
@@ -252,7 +292,25 @@ for arg in "$@"; do
     i=$((i+1))
 done
 
+# check usage
+if [ $# -lt 4 ]
+then
+    echo "Usage:"
+    echo "${0} <submission folder> <target folder> <test folder> <answer folder> [-v] [-noexecute]"
+    echo ""
+    echo "-v: verbose"
+    echo "-noexecute: do not execute code files"
+    kill -INT $$
+fi
+
+if [ $verbose_flag == "true" ]
+then
+    count_test_files "$3"
+fi
+
 unzip_submissions "$1"
+
+rm -r "$2" # delete target directory if already exists
 
 organize_files "$1" "$2"
 
@@ -260,9 +318,8 @@ if [ "$noexec_flag" = "false" ]
 then
     execute_files "$2" "$3"
 
-    csv_path="target/results.csv"
+    csv_path="${2}/results.csv"
     echo "student_id,type,matched,not_matched" > "$csv_path"
 
     match_files "$2" "$4" "$csv_path"
 fi
-
