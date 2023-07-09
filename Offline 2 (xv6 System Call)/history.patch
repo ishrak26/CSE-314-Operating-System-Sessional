@@ -120,7 +120,7 @@ index d021857..63ab53f 100644
 +  int trace_syscall_num;       // syscall number that needs to be traced
  };
 diff --git a/kernel/syscall.c b/kernel/syscall.c
-index ed65409..31fa287 100644
+index ed65409..33c4aab 100644
 --- a/kernel/syscall.c
 +++ b/kernel/syscall.c
 @@ -6,6 +6,10 @@
@@ -179,7 +179,7 @@ index ed65409..31fa287 100644
  
  // An array mapping syscall numbers from syscall.h
  // to the function that handles the system call.
-@@ -126,19 +145,128 @@ static uint64 (*syscalls[])(void) = {
+@@ -126,19 +145,130 @@ static uint64 (*syscalls[])(void) = {
  [SYS_link]    sys_link,
  [SYS_mkdir]   sys_mkdir,
  [SYS_close]   sys_close,
@@ -256,6 +256,10 @@ index ed65409..31fa287 100644
 -    p->trapframe->a0 = syscalls[num]();
 +    
 +    // printf("\nsyscall is %s\n", syscall_names[num]);
++
++    acquire(&syscall_stats[num].lock);
++    syscall_stats[num].count++;
++    release(&syscall_stats[num].lock);
 +    
 +    uint ticks0, ticks1;
 +
@@ -264,7 +268,6 @@ index ed65409..31fa287 100644
 +      print_arg = 1;
 +      arg_cnt = 0;
 +      printf("pid: %d, syscall: %s, args: (", pid, syscall_names[num]);
-+      
 +      
 +      acquire(&tickslock);
 +      ticks0 = ticks;
@@ -303,7 +306,6 @@ index ed65409..31fa287 100644
 +
 +    acquire(&syscall_stats[num].lock);
 +    syscall_stats[num].accum_time += time_taken;
-+    syscall_stats[num].count++;
 +    release(&syscall_stats[num].lock);
 +
    } else {
@@ -391,36 +393,49 @@ index 1de184e..79d8447 100644
 +}
 diff --git a/user/history.c b/user/history.c
 new file mode 100644
-index 0000000..78214e9
+index 0000000..ca836b8
 --- /dev/null
 +++ b/user/history.c
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,41 @@
 +#include "kernel/param.h"
 +#include "kernel/types.h"
 +#include "kernel/stat.h"
 +#include "kernel/spinlock.h"
 +#include "kernel/syscall_stat.h"
++#include "kernel/syscall.h"
 +#include "user/user.h"
 +
 +int
 +main(int argc, char *argv[])
 +{
 +
-+    if(argc > 2 || (argv[1][0] < '0' || argv[1][0] > '9')){
++    struct syscall_stat st;
++
++    if (argc == 1) {
++        // history is called for all
++        int i;
++        for (i = 1; i < SYS_CALL_COUNT; i++) {
++            if (history(i, &st) < 0) {
++                fprintf(2, "%s: history failed\n", argv[0]);
++                exit(1);
++            }
++            printf("%d:\tsyscall: %s, #: %d, time: %d\n", i, st.syscall_name, st.count, st.accum_time);
++        }
++    }
++    else if(argc > 2 || (argv[1][0] < '0' || argv[1][0] > '9')){
 +        fprintf(2, "Usage: %s sys_call_num command\n", argv[0]);
 +        exit(1);
 +    }
-+
-+    struct syscall_stat st;
-+    int syscall_num = atoi(argv[1]);
-+    // if history is called for a particular system call
-+    if (history(syscall_num, &st) < 0) {
-+        fprintf(2, "%s: history failed\n", argv[0]);
-+        exit(1);
++    else {
++        // history is called for a particular system call
++        int syscall_num = atoi(argv[1]);
++        if (history(syscall_num, &st) < 0) {
++            fprintf(2, "%s: history failed\n", argv[0]);
++            exit(1);
++        }
++        printf("%d:\tsyscall: %s, #: %d, time: %d\n", syscall_num, st.syscall_name, st.count, st.accum_time);
 +    }
 +
-+    printf("%d:\tsyscall: %s, #: %d, time: %d\n", syscall_num, st.syscall_name, st.count, st.accum_time);
-+    
 +    exit(0);
 +}
 diff --git a/user/trace.c b/user/trace.c
