@@ -121,7 +121,7 @@ index d021857..63ab53f 100644
 +  int trace_syscall_num;       // syscall number that needs to be traced
  };
 diff --git a/kernel/syscall.c b/kernel/syscall.c
-index ed65409..c62a19a 100644
+index ed65409..40d0fd8 100644
 --- a/kernel/syscall.c
 +++ b/kernel/syscall.c
 @@ -6,6 +6,9 @@
@@ -216,6 +216,7 @@ index ed65409..c62a19a 100644
  syscall(void)
  {
 +  print_arg = 0;
++  
    int num;
    struct proc *p = myproc();
  
@@ -240,22 +241,21 @@ index ed65409..c62a19a 100644
 +
 +    // check if this syscall is traced
 +    if (num == p->trace_syscall_num) {
-+      
++      print_arg = 1;
 +      printf("pid: %d, syscall: %s, args: ", pid, syscall_names[num]);
 +
 +      acquire(&tickslock);
 +      ticks0 = ticks;
 +      release(&tickslock);
 +
-+      print_arg = 1;
 +      p->trapframe->a0 = syscalls[num]();
-+      print_arg = 0;
 +
 +      acquire(&tickslock);
 +      ticks1 = ticks;
 +      release(&tickslock);
 +
 +      printf(", return: %d\n", p->trapframe->a0);
++      print_arg = 0;
 +    }
 +    else {
 +
@@ -308,96 +308,80 @@ index 0000000..ec054dd
 +    int accum_time; // total time taken by this system call
 +};
 diff --git a/kernel/sysfile.c b/kernel/sysfile.c
-index 16b668c..0140364 100644
+index 16b668c..7592fb0 100644
 --- a/kernel/sysfile.c
 +++ b/kernel/sysfile.c
-@@ -25,6 +25,9 @@ argfd(int n, int *pfd, struct file **pf)
+@@ -16,6 +16,8 @@
+ #include "file.h"
+ #include "fcntl.h"
+ 
++int curr_fd;
++
+ // Fetch the nth word-sized system call argument as a file descriptor
+ // and return both the descriptor and the corresponding struct file.
+ static int
+@@ -25,6 +27,9 @@ argfd(int n, int *pfd, struct file **pf)
    struct file *f;
  
    argint(n, &fd);
 +  if (get_print_arg()) {
-+    printf("%d", fd);
++    curr_fd = fd;
 +  }
    if(fd < 0 || fd >= NOFILE || (f=myproc()->ofile[fd]) == 0)
      return -1;
    if(pfd)
-@@ -57,8 +60,14 @@ sys_dup(void)
-   struct file *f;
-   int fd;
+@@ -59,6 +64,9 @@ sys_dup(void)
  
-+  if (get_print_arg()) {
-+    printf("(");
-+  }
    if(argfd(0, 0, &f) < 0)
      return -1;
 +  if (get_print_arg()) {
-+    printf(")");
++    printf("(%d)", curr_fd);
 +  }
    if((fd=fdalloc(f)) < 0)
      return -1;
    filedup(f);
-@@ -74,8 +83,14 @@ sys_read(void)
- 
-   argaddr(1, &p);
+@@ -76,6 +84,9 @@ sys_read(void)
    argint(2, &n);
-+  if (get_print_arg()) {
-+    printf("(");
-+  }
    if(argfd(0, 0, &f) < 0)
      return -1;
 +  if (get_print_arg()) {
-+    printf(", %p, %d)", p, n);
++    printf("(%d, %p, %d)", curr_fd, p, n);
 +  }
    return fileread(f, p, n);
  }
  
-@@ -88,8 +103,14 @@ sys_write(void)
-   
-   argaddr(1, &p);
+@@ -90,6 +101,9 @@ sys_write(void)
    argint(2, &n);
-+  if (get_print_arg()) {
-+    printf("(");
-+  }
    if(argfd(0, 0, &f) < 0)
      return -1;
 +  if (get_print_arg()) {
-+    printf(", %p, %d)", p, n);
++    printf("(%d, %p, %d)", curr_fd, p, n);
 +  }
  
    return filewrite(f, p, n);
  }
-@@ -100,8 +121,15 @@ sys_close(void)
-   int fd;
-   struct file *f;
+@@ -102,6 +116,10 @@ sys_close(void)
  
-+  if (get_print_arg()) {
-+    printf("(");
-+  }
    if(argfd(0, &fd, &f) < 0)
      return -1;
 +  if (get_print_arg()) {
-+    printf(")");
++    printf("(%d)", fd);
 +  }
-+
++  
    myproc()->ofile[fd] = 0;
    fileclose(f);
    return 0;
-@@ -114,8 +142,14 @@ sys_fstat(void)
-   uint64 st; // user pointer to struct stat
- 
+@@ -116,6 +134,9 @@ sys_fstat(void)
    argaddr(1, &st);
-+  if (get_print_arg()) {
-+    printf("(");
-+  }
    if(argfd(0, 0, &f) < 0)
      return -1;
 +  if (get_print_arg()) {
-+    printf(", %p)", st);
++    printf("(%d, %p)", curr_fd, st);
 +  }
    return filestat(f, st);
  }
  
-@@ -128,6 +162,9 @@ sys_link(void)
+@@ -128,6 +149,9 @@ sys_link(void)
  
    if(argstr(0, old, MAXPATH) < 0 || argstr(1, new, MAXPATH) < 0)
      return -1;
@@ -407,7 +391,7 @@ index 16b668c..0140364 100644
  
    begin_op();
    if((ip = namei(old)) == 0){
-@@ -195,6 +232,9 @@ sys_unlink(void)
+@@ -195,6 +219,9 @@ sys_unlink(void)
  
    if(argstr(0, path, MAXPATH) < 0)
      return -1;
@@ -417,7 +401,7 @@ index 16b668c..0140364 100644
  
    begin_op();
    if((dp = nameiparent(path, name)) == 0){
-@@ -313,6 +353,9 @@ sys_open(void)
+@@ -313,6 +340,9 @@ sys_open(void)
    argint(1, &omode);
    if((n = argstr(0, path, MAXPATH)) < 0)
      return -1;
@@ -427,7 +411,7 @@ index 16b668c..0140364 100644
  
    begin_op();
  
-@@ -381,6 +424,9 @@ sys_mkdir(void)
+@@ -381,6 +411,9 @@ sys_mkdir(void)
      end_op();
      return -1;
    }
@@ -437,7 +421,7 @@ index 16b668c..0140364 100644
    iunlockput(ip);
    end_op();
    return 0;
-@@ -401,6 +447,9 @@ sys_mknod(void)
+@@ -401,6 +434,9 @@ sys_mknod(void)
      end_op();
      return -1;
    }
@@ -447,7 +431,7 @@ index 16b668c..0140364 100644
    iunlockput(ip);
    end_op();
    return 0;
-@@ -418,6 +467,9 @@ sys_chdir(void)
+@@ -418,6 +454,9 @@ sys_chdir(void)
      end_op();
      return -1;
    }
@@ -457,7 +441,7 @@ index 16b668c..0140364 100644
    ilock(ip);
    if(ip->type != T_DIR){
      iunlockput(ip);
-@@ -442,6 +494,9 @@ sys_exec(void)
+@@ -442,6 +481,9 @@ sys_exec(void)
    if(argstr(0, path, MAXPATH) < 0) {
      return -1;
    }
@@ -467,7 +451,7 @@ index 16b668c..0140364 100644
    memset(argv, 0, sizeof(argv));
    for(i=0;; i++){
      if(i >= NELEM(argv)){
-@@ -483,6 +538,9 @@ sys_pipe(void)
+@@ -483,6 +525,9 @@ sys_pipe(void)
    struct proc *p = myproc();
  
    argaddr(0, &fdarray);
@@ -478,7 +462,7 @@ index 16b668c..0140364 100644
      return -1;
    fd0 = -1;
 diff --git a/kernel/sysproc.c b/kernel/sysproc.c
-index 1de184e..c123d0f 100644
+index 1de184e..9fb997b 100644
 --- a/kernel/sysproc.c
 +++ b/kernel/sysproc.c
 @@ -5,12 +5,16 @@
@@ -494,7 +478,7 @@ index 1de184e..c123d0f 100644
    argint(0, &n);
 +  if (get_print_arg()) {
 +    printf("(%d)", n);
-+  }
++  }  
    exit(n);
    return 0;  // not reached
  }
