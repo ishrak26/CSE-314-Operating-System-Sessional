@@ -1,8 +1,18 @@
 diff --git a/Makefile b/Makefile
-index 39a99d7..ffe13ba 100644
+index 39a99d7..3cb30e8 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -153,7 +153,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
+@@ -28,7 +28,8 @@ OBJS = \
+   $K/sysfile.o \
+   $K/kernelvec.o \
+   $K/plic.o \
+-  $K/virtio_disk.o
++  $K/virtio_disk.o \
++  $K/rand.o
+ 
+ # riscv64-unknown-elf- or riscv64-linux-gnu-
+ # perhaps in /opt/riscv/bin
+@@ -153,7 +154,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
  	then echo "-gdb tcp::$(GDBPORT)"; \
  	else echo "-s -p $(GDBPORT)"; fi)
  ifndef CPUS
@@ -24,7 +34,7 @@ index 6624bff..9b16e28 100644
 +#define BOOST_INTERVAL 64 // time interval for priority boosting
 +#define DEFAULT_TICKET_COUNT 10 // default number of tickets for each process
 diff --git a/kernel/proc.c b/kernel/proc.c
-index 959b778..4165eda 100644
+index 959b778..138e275 100644
 --- a/kernel/proc.c
 +++ b/kernel/proc.c
 @@ -5,6 +5,7 @@
@@ -47,7 +57,7 @@ index 959b778..4165eda 100644
    return p;
  }
  
-@@ -446,28 +452,76 @@ scheduler(void)
+@@ -446,28 +452,110 @@ scheduler(void)
  {
    struct proc *p;
    struct cpu *c = mycpu();
@@ -79,13 +89,16 @@ index 959b778..4165eda 100644
        }
        release(&p->lock);
      }
++    
 +
 +    if (total_tickets > 0) {
++      // printf("Total tickets: %d\n", total_tickets);
++      
 +      // queue 1 is not empty yet
 +      // assign a process from queue 1
 +      // generate a random number for lottery scheduling
 +      int r = random_at_most(total_tickets-1);
-+      printf("random number is %d\n", r);
++      // printf("random number is %d\n", r);
 +
 +      // assign accordingly to the runnable processes
 +      int sum = 0, assigned = 0;
@@ -101,8 +114,25 @@ index 959b778..4165eda 100644
 +            p->state = RUNNING;
 +            c->proc = p;
 +            p->current_ticket_cnt--;
-+            
++            p->curr_time_slices = TIME_LIMIT_1;
++
++            // acquire(&tickslock);
++            // printf("Before switch in queue 1, time slice: %d, %d\n", ticks, p->state);
++            // release(&tickslock);
++
 +            swtch(&c->context, &p->context);
++
++            if (p->current_ticket_cnt == 0) {
++              p->queue_num = 2;
++            }
++            else if (p->state == RUNNABLE) {
++              p->queue_num = 2;
++            }
++
++            // acquire(&tickslock);
++            // printf("After coming back in queue 1, time slice: %d, %d\n", ticks, p->state);
++            // release(&tickslock);
++            
 +
 +            // Process is done running for now.
 +            // It should have changed its p->state before coming back.
@@ -123,7 +153,21 @@ index 959b778..4165eda 100644
 +          // before jumping back to us.
 +          p->state = RUNNING;
 +          c->proc = p;
++          p->curr_time_slices = TIME_LIMIT_2;
++
++          // acquire(&tickslock);
++          // printf("Before switch in queue 2, time slice: %d, %d\n", ticks, p->state);
++          // release(&tickslock);
 +          swtch(&c->context, &p->context);
++
++          if (p->state == RUNNABLE) {
++              p->queue_num = 1;
++              p->current_ticket_cnt = p->original_ticket_cnt;
++            }
++
++          // acquire(&tickslock);
++          // printf("After coming back in queue 2, time slice: %d, %d\n", ticks, p->state);
++          // release(&tickslock);
 +
 +          // Process is done running for now.
 +          // It should have changed its p->state before coming back.
@@ -135,6 +179,19 @@ index 959b778..4165eda 100644
    }
  }
  
+@@ -504,6 +592,12 @@ yield(void)
+ {
+   struct proc *p = myproc();
+   acquire(&p->lock);
++  // check the queue number for p
++  if (p->queue_num == 2 && p->curr_time_slices > 0) {
++    // keep going
++    release(&p->lock);
++    return;
++  }   
+   p->state = RUNNABLE;
+   sched();
+   release(&p->lock);
 diff --git a/kernel/proc.h b/kernel/proc.h
 index d021857..7c6b9d9 100644
 --- a/kernel/proc.h
@@ -305,7 +362,7 @@ index 0000000..01affcb
 +long genrand(void);
 +long random_at_most(long);
 diff --git a/kernel/trap.c b/kernel/trap.c
-index 512c850..9888045 100644
+index 512c850..fceb41c 100644
 --- a/kernel/trap.c
 +++ b/kernel/trap.c
 @@ -16,6 +16,8 @@ void kernelvec();
@@ -317,21 +374,29 @@ index 512c850..9888045 100644
  void
  trapinit(void)
  {
-@@ -160,11 +162,27 @@ kerneltrap()
+@@ -160,11 +162,36 @@ kerneltrap()
    w_sstatus(sstatus);
  }
  
-+struct proc proc[NPROC];
++extern struct proc proc[NPROC];
 +
  void
  clockintr()
  {
++  struct proc *p;
    acquire(&tickslock);
    ticks++;
++  for(p = proc; p < &proc[NPROC]; p++) {
++    acquire(&p->lock);
++    if(p->state == RUNNING) {
++      p->curr_time_slices--;
++    }
++    release(&p->lock);
++  }
++
 +  priority_boosting_time++;
 +  if (priority_boosting_time == BOOST_INTERVAL) {
 +    // priority boost
-+    struct proc *p;
 +    for(p = proc; p < &proc[NPROC]; p++) {
 +      acquire(&p->lock);
 +      if(p->state == RUNNABLE && p->queue_num == 2) {
@@ -342,6 +407,7 @@ index 512c850..9888045 100644
 +    }
 +    priority_boosting_time = 0;
 +  }
++  
    wakeup(&ticks);
    release(&tickslock);
  }
