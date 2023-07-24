@@ -64,7 +64,7 @@ index 6624bff..9b16e28 100644
 +#define BOOST_INTERVAL 64 // time interval for priority boosting
 +#define DEFAULT_TICKET_COUNT 10 // default number of tickets for each process
 diff --git a/kernel/proc.c b/kernel/proc.c
-index 959b778..1820b9a 100644
+index 959b778..8f6ea1b 100644
 --- a/kernel/proc.c
 +++ b/kernel/proc.c
 @@ -5,6 +5,8 @@
@@ -90,18 +90,20 @@ index 959b778..1820b9a 100644
    return p;
  }
  
-@@ -320,6 +329,10 @@ fork(void)
+@@ -320,6 +329,12 @@ fork(void)
  
    acquire(&np->lock);
    np->state = RUNNABLE;
++
 +  acquire(&p->lock);
 +  np->original_ticket_cnt = p->original_ticket_cnt;
 +  release(&p->lock);
++  
 +  np->current_ticket_cnt = np->original_ticket_cnt;
    release(&np->lock);
  
    return pid;
-@@ -446,28 +459,126 @@ scheduler(void)
+@@ -446,28 +461,126 @@ scheduler(void)
  {
    struct proc *p;
    struct cpu *c = mycpu();
@@ -239,7 +241,7 @@ index 959b778..1820b9a 100644
    }
  }
  
-@@ -494,6 +605,20 @@ sched(void)
+@@ -494,6 +607,20 @@ sched(void)
      panic("sched interruptible");
  
    intena = mycpu()->intena;
@@ -260,7 +262,7 @@ index 959b778..1820b9a 100644
    swtch(&p->context, &mycpu()->context);
    mycpu()->intena = intena;
  }
-@@ -681,3 +806,38 @@ procdump(void)
+@@ -681,3 +808,38 @@ procdump(void)
      printf("\n");
    }
  }
@@ -504,7 +506,7 @@ index bc5f356..7926b7f 100644
 +#define SYS_settickets 22
 +#define SYS_getpinfo 23
 diff --git a/kernel/sysproc.c b/kernel/sysproc.c
-index 1de184e..f9c019e 100644
+index 1de184e..ded976b 100644
 --- a/kernel/sysproc.c
 +++ b/kernel/sysproc.c
 @@ -5,6 +5,7 @@
@@ -515,7 +517,7 @@ index 1de184e..f9c019e 100644
  
  uint64
  sys_exit(void)
-@@ -89,3 +90,34 @@ sys_uptime(void)
+@@ -89,3 +90,40 @@ sys_uptime(void)
    release(&tickslock);
    return xticks;
  }
@@ -527,6 +529,7 @@ index 1de184e..f9c019e 100644
 +  struct proc *p = myproc();
 +  if (num < 0) {
 +    acquire(&p->lock);
++    p->original_ticket_cnt = DEFAULT_TICKET_COUNT;
 +    p->current_ticket_cnt = p->original_ticket_cnt;
 +    release(&p->lock);
 +    return -1;
@@ -545,6 +548,11 @@ index 1de184e..f9c019e 100644
 +  uint64 pst; // user pointer to struct pstat
 +  argaddr(0, &pst);
 +
++  if (pst == 0) {
++    return -1;
++  }
++
++  // update the pstat to be returned
 +  struct pstat pst2;
 +  copy_pinfo(&pst2);
 +
@@ -602,10 +610,10 @@ index 512c850..4720238 100644
  }
 diff --git a/user/dummyproc.c b/user/dummyproc.c
 new file mode 100644
-index 0000000..5556018
+index 0000000..5c93fa3
 --- /dev/null
 +++ b/user/dummyproc.c
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,42 @@
 +#include "kernel/param.h"
 +#include "kernel/types.h"
 +#include "kernel/stat.h"
@@ -621,11 +629,30 @@ index 0000000..5556018
 +  }
 +
 +  fork();
++  fork();
++
++  for (int i = 0; i < 1000*10000; i++) {
++    ;
++  }
 +
 +  if (settickets(atoi(argv[1])) < 0) {
 +    fprintf(2, "%s: settickets failed\n", argv[0]);
 +    exit(1);
 +  }
++
++  fork();
++
++  for (int i = 0; i < 1000*10000; i++) {
++    ;
++  }
++
++  fork();
++
++  for (int i = 0; i < 1000*10000; i++) {
++    ;
++  }
++
++  fork();
 +
 +  exit(0);
 +}
