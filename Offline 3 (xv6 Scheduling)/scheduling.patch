@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 39a99d7..3cb30e8 100644
+index 39a99d7..dafe9b7 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -28,7 +28,8 @@ OBJS = \
@@ -12,7 +12,16 @@ index 39a99d7..3cb30e8 100644
  
  # riscv64-unknown-elf- or riscv64-linux-gnu-
  # perhaps in /opt/riscv/bin
-@@ -153,7 +154,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
+@@ -132,6 +133,8 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
++	# $U/_dummyproc\
++	# $U/_testprocinfo\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+@@ -153,7 +156,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
  	then echo "-gdb tcp::$(GDBPORT)"; \
  	else echo "-s -p $(GDBPORT)"; fi)
  ifndef CPUS
@@ -34,7 +43,7 @@ index 6624bff..9b16e28 100644
 +#define BOOST_INTERVAL 64 // time interval for priority boosting
 +#define DEFAULT_TICKET_COUNT 10 // default number of tickets for each process
 diff --git a/kernel/proc.c b/kernel/proc.c
-index 959b778..138e275 100644
+index 959b778..2c83df4 100644
 --- a/kernel/proc.c
 +++ b/kernel/proc.c
 @@ -5,6 +5,7 @@
@@ -45,7 +54,7 @@ index 959b778..138e275 100644
  
  struct cpu cpus[NCPU];
  
-@@ -146,6 +147,11 @@ found:
+@@ -146,6 +147,13 @@ found:
    p->context.ra = (uint64)forkret;
    p->context.sp = p->kstack + PGSIZE;
  
@@ -54,10 +63,12 @@ index 959b778..138e275 100644
 +  p->current_ticket_cnt = p->original_ticket_cnt;
 +  p->total_time_slices = 0;
 +
++  printf("Process %d allocated with queue %d and tickets %d\n", p->pid, p->queue_num, p->original_ticket_cnt);
++
    return p;
  }
  
-@@ -446,28 +452,110 @@ scheduler(void)
+@@ -446,28 +454,126 @@ scheduler(void)
  {
    struct proc *p;
    struct cpu *c = mycpu();
@@ -68,6 +79,7 @@ index 959b778..138e275 100644
    for(;;){
      // Avoid deadlock by ensuring that devices can interrupt.
      intr_on();
++    int found = 0;
  
 +    // queue 1
 +    int total_tickets = 0;
@@ -84,14 +96,27 @@ index 959b778..138e275 100644
 -        // Process is done running for now.
 -        // It should have changed its p->state before coming back.
 -        c->proc = 0;
-+      if(p->state == RUNNABLE && p->queue_num == 1) {
++      if (p->queue_num == 1) {
 +        total_tickets += p->current_ticket_cnt;
++        if (p->state == RUNNABLE && !found) {
++          found = 1;
++        }
        }
        release(&p->lock);
      }
-+    
 +
-+    if (total_tickets > 0) {
++    if (total_tickets == 0) {
++      // reassign everyone
++      for(p = proc; p < &proc[NPROC]; p++) {
++      acquire(&p->lock);
++      if (p->queue_num == 1) {
++        p->current_ticket_cnt = p->original_ticket_cnt;
++      }
++      release(&p->lock);
++    }
++    }
++    
++    if (found) {
 +      // printf("Total tickets: %d\n", total_tickets);
 +      
 +      // queue 1 is not empty yet
@@ -115,24 +140,19 @@ index 959b778..138e275 100644
 +            c->proc = p;
 +            p->current_ticket_cnt--;
 +            p->curr_time_slices = TIME_LIMIT_1;
++            p->total_time_slices += TIME_LIMIT_1;
 +
 +            // acquire(&tickslock);
 +            // printf("Before switch in queue 1, time slice: %d, %d\n", ticks, p->state);
 +            // release(&tickslock);
 +
-+            swtch(&c->context, &p->context);
++            printf("Process %d assigned in queue %d with ticket remaining %d\n", p->pid, p->queue_num, p->current_ticket_cnt);
 +
-+            if (p->current_ticket_cnt == 0) {
-+              p->queue_num = 2;
-+            }
-+            else if (p->state == RUNNABLE) {
-+              p->queue_num = 2;
-+            }
++            swtch(&c->context, &p->context);
 +
 +            // acquire(&tickslock);
 +            // printf("After coming back in queue 1, time slice: %d, %d\n", ticks, p->state);
 +            // release(&tickslock);
-+            
 +
 +            // Process is done running for now.
 +            // It should have changed its p->state before coming back.
@@ -144,7 +164,7 @@ index 959b778..138e275 100644
 +    }
 +    else {
 +      // queue 1 is empty
-+      // queue 2
++      // look in queue 2
 +      for(p = proc; p < &proc[NPROC]; p++) {
 +        acquire(&p->lock);
 +        if(p->state == RUNNABLE && p->queue_num == 2) {
@@ -154,16 +174,23 @@ index 959b778..138e275 100644
 +          p->state = RUNNING;
 +          c->proc = p;
 +          p->curr_time_slices = TIME_LIMIT_2;
++          p->total_time_slices += TIME_LIMIT_2;
 +
 +          // acquire(&tickslock);
 +          // printf("Before switch in queue 2, time slice: %d, %d\n", ticks, p->state);
 +          // release(&tickslock);
++
++          printf("Process %d assigned in queue %d\n", p->pid, p->queue_num);
++
 +          swtch(&c->context, &p->context);
 +
-+          if (p->state == RUNNABLE) {
-+              p->queue_num = 1;
-+              p->current_ticket_cnt = p->original_ticket_cnt;
-+            }
++          if (p->queue_num == 2 && p->state == RUNNABLE && p->curr_time_slices == 1) {
++            // it still has one more time slice
++            p->state = RUNNING;
++            c->proc = p;
++            printf("Process %d assigned again in queue %d\n", p->pid, p->queue_num);
++            swtch(&c->context, &p->context);
++          }
 +
 +          // acquire(&tickslock);
 +          // printf("After coming back in queue 2, time slice: %d, %d\n", ticks, p->state);
@@ -179,19 +206,27 @@ index 959b778..138e275 100644
    }
  }
  
-@@ -504,6 +592,12 @@ yield(void)
- {
-   struct proc *p = myproc();
-   acquire(&p->lock);
-+  // check the queue number for p
-+  if (p->queue_num == 2 && p->curr_time_slices > 0) {
-+    // keep going
-+    release(&p->lock);
-+    return;
-+  }   
-   p->state = RUNNABLE;
-   sched();
-   release(&p->lock);
+@@ -494,6 +600,20 @@ sched(void)
+     panic("sched interruptible");
+ 
+   intena = mycpu()->intena;
++  printf("Process %d has state %d\n", p->pid, p->state);
++  if (p->state == SLEEPING) {
++    // process has voluntarily relinquished control of the CPU
++    if (p->queue_num == 2) {
++      p->queue_num = 1;
++      p->current_ticket_cnt = p->original_ticket_cnt;
++    }
++  }
++  else if (p->state == RUNNABLE) {
++    // process has consumed all the time slices
++    if (p->queue_num == 1) {
++      p->queue_num = 2;
++    }
++  }
+   swtch(&p->context, &mycpu()->context);
+   mycpu()->intena = intena;
+ }
 diff --git a/kernel/proc.h b/kernel/proc.h
 index d021857..7c6b9d9 100644
 --- a/kernel/proc.h
@@ -361,6 +396,56 @@ index 0000000..01affcb
 +void sgenrand(unsigned long);
 +long genrand(void);
 +long random_at_most(long);
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..ce52e87 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -101,6 +101,8 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
++extern uint64 sys_settickets(void);
++extern uint64 sys_getpinfo(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -126,6 +128,8 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_settickets] sys_settickets,
++[SYS_getpinfo] sys_getpinfo,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..7926b7f 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,5 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_settickets 22
++#define SYS_getpinfo 23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 1de184e..c5b37ec 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -89,3 +89,13 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_settickets(void) {
++  return 0;
++}
++
++uint64 
++sys_getpinfo(void) {
++  return 0;
++}
 diff --git a/kernel/trap.c b/kernel/trap.c
 index 512c850..fceb41c 100644
 --- a/kernel/trap.c
@@ -411,3 +496,38 @@ index 512c850..fceb41c 100644
    wakeup(&ticks);
    release(&tickslock);
  }
+diff --git a/user/dummyproc.c b/user/dummyproc.c
+new file mode 100644
+index 0000000..e69de29
+diff --git a/user/testprocinfo.c b/user/testprocinfo.c
+new file mode 100644
+index 0000000..e69de29
+diff --git a/user/user.h b/user/user.h
+index 4d398d5..452882c 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -1,4 +1,5 @@
+ struct stat;
++struct pstat;
+ 
+ // system calls
+ int fork(void);
+@@ -22,6 +23,8 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int settickets(int number);
++int getpinfo(struct pstat *);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..d2435c1 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -36,3 +36,5 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("settickets");
++entry("getpinfo");
