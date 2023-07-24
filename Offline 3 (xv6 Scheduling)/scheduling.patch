@@ -43,7 +43,7 @@ index 6624bff..9b16e28 100644
 +#define BOOST_INTERVAL 64 // time interval for priority boosting
 +#define DEFAULT_TICKET_COUNT 10 // default number of tickets for each process
 diff --git a/kernel/proc.c b/kernel/proc.c
-index 959b778..2c83df4 100644
+index 959b778..2e67a68 100644
 --- a/kernel/proc.c
 +++ b/kernel/proc.c
 @@ -5,6 +5,7 @@
@@ -96,9 +96,9 @@ index 959b778..2c83df4 100644
 -        // Process is done running for now.
 -        // It should have changed its p->state before coming back.
 -        c->proc = 0;
-+      if (p->queue_num == 1) {
++      if (p->queue_num == 1 && p->state == RUNNABLE) {
 +        total_tickets += p->current_ticket_cnt;
-+        if (p->state == RUNNABLE && !found) {
++        if (p->current_ticket_cnt > 0 && !found) {
 +          found = 1;
 +        }
        }
@@ -108,17 +108,17 @@ index 959b778..2c83df4 100644
 +    if (total_tickets == 0) {
 +      // reassign everyone
 +      for(p = proc; p < &proc[NPROC]; p++) {
-+      acquire(&p->lock);
-+      if (p->queue_num == 1) {
-+        p->current_ticket_cnt = p->original_ticket_cnt;
++        acquire(&p->lock);
++        if (p->queue_num == 1 && p->state == RUNNABLE) {
++          p->current_ticket_cnt = p->original_ticket_cnt;
++        }
++        release(&p->lock);
 +      }
-+      release(&p->lock);
 +    }
-+    }
-+    
++
 +    if (found) {
 +      // printf("Total tickets: %d\n", total_tickets);
-+      
++
 +      // queue 1 is not empty yet
 +      // assign a process from queue 1
 +      // generate a random number for lottery scheduling
@@ -263,7 +263,7 @@ index 0000000..de941fd
 +#endif // _PSTAT_H_
 diff --git a/kernel/rand.c b/kernel/rand.c
 new file mode 100644
-index 0000000..b4b33b7
+index 0000000..1630f8e
 --- /dev/null
 +++ b/kernel/rand.c
 @@ -0,0 +1,120 @@
@@ -288,7 +288,7 @@ index 0000000..b4b33b7
 +/* See the GNU Library General Public License for more details.    */
 +/* You should have received a copy of the GNU Library General      */
 +/* Public License along with this library; if not, write to the    */
-+/* Free Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA   */ 
++/* Free Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA   */
 +/* 02111-1307  USA                                                 */
 +
 +/* Copyright (C) 1997 Makoto Matsumoto and Takuji Nishimura.       */
@@ -296,14 +296,14 @@ index 0000000..b4b33b7
 +/* see http://www.math.keio.ac.jp/matumoto/emt.html or email       */
 +/* matumoto@math.keio.ac.jp                                        */
 +
-+/* Period parameters */  
++/* Period parameters */
 +#define N 624
 +#define M 397
 +#define MATRIX_A 0x9908b0df   /* constant vector a */
 +#define UPPER_MASK 0x80000000 /* most significant w-r bits */
 +#define LOWER_MASK 0x7fffffff /* least significant r bits */
 +
-+/* Tempering parameters */   
++/* Tempering parameters */
 +#define TEMPERING_MASK_B 0x9d2c5680
 +#define TEMPERING_MASK_C 0xefc60000
 +#define TEMPERING_SHIFT_U(y)  (y >> 11)
@@ -355,7 +355,7 @@ index 0000000..b4b33b7
 +
 +        mti = 0;
 +    }
-+  
++
 +    y = mt[mti++];
 +    y ^= TEMPERING_SHIFT_U(y);
 +    y ^= TEMPERING_SHIFT_S(y) & TEMPERING_MASK_B;
@@ -429,7 +429,7 @@ index bc5f356..7926b7f 100644
 +#define SYS_settickets 22
 +#define SYS_getpinfo 23
 diff --git a/kernel/sysproc.c b/kernel/sysproc.c
-index 1de184e..c5b37ec 100644
+index 1de184e..a975060 100644
 --- a/kernel/sysproc.c
 +++ b/kernel/sysproc.c
 @@ -89,3 +89,13 @@ sys_uptime(void)
@@ -442,12 +442,12 @@ index 1de184e..c5b37ec 100644
 +  return 0;
 +}
 +
-+uint64 
++uint64
 +sys_getpinfo(void) {
 +  return 0;
 +}
 diff --git a/kernel/trap.c b/kernel/trap.c
-index 512c850..fceb41c 100644
+index 512c850..4720238 100644
 --- a/kernel/trap.c
 +++ b/kernel/trap.c
 @@ -16,6 +16,8 @@ void kernelvec();
@@ -492,7 +492,7 @@ index 512c850..fceb41c 100644
 +    }
 +    priority_boosting_time = 0;
 +  }
-+  
++
    wakeup(&ticks);
    release(&tickslock);
  }
