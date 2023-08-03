@@ -11,8 +11,10 @@ using namespace std;
 #define PS_CNT 4 // no. of printing stations
 #define MAX_STUD_CNT 100 // max. no. of students
 #define BS_CNT 2 // no. of binding stations
+#define STAFF_CNT 2 // no. of library staffs
 
-const double POISSON_MEAN = 3.0;
+const double POISSON_MEAN = 5.0;
+const double POISSON_MEAN_STAFF = 10.0;
 
 int N; // number of students
 int M; // size of each group
@@ -42,21 +44,38 @@ print_state print_states[MAX_STUD_CNT]; // print state for each student
 sem_t bind_needed[MAX_STUD_CNT]; // one semaphore for each group leader
 sem_t bind_station; // semaphore for binding stations
 
+// submission
+int rc; // number of readers reading or wanting to
+pthread_mutex_t entry_read; // controls access to rc
+sem_t entry_book; // controls access to entry book
+int submit_cnt;
+
 // Initialize all semaphore and mutex
 void init_semaphore()
 {
-	pthread_mutex_init(&time_lock,0);
+	// time
+    pthread_mutex_init(&time_lock,0);
     curr_time = 0;
+
+    // printing
     for (int i = 0; i < PS_CNT; i++) {
         pthread_mutex_init(&print_state_locks[i],0);
     }
     for (int i = 0; i < N; i++) {
         sem_init(&print_acquire[i],1,0);
     }
+
+    // binding
     for (int i = 0; i < N/M; i++) {
         sem_init(&bind_needed[i],1,0);
     }
     sem_init(&bind_station,1,BS_CNT);
+
+    // submission
+    rc = 0;
+    submit_cnt = 0;
+    pthread_mutex_init(&entry_read,0);
+    sem_init(&entry_book,1,1);
 }
 
 
@@ -205,6 +224,59 @@ void * leader_func(void * arg) {
     pthread_mutex_unlock(&time_lock);
 
     sem_post(&bind_station); // release binding station
+
+    // submit 
+    sem_wait(&entry_book); // get exclusive access to entry book
+    submit_cnt++;
+
+    pthread_mutex_lock(&time_lock);
+    thread_time = curr_time;
+    cout << "Group " << gid << " has submitted the report at time " << thread_time << endl;
+    pthread_mutex_unlock(&time_lock);
+
+    sem_post(&entry_book); // release exclusive access to entry book
+}
+
+void * staff_func(void * arg) {
+    int staff_id = (intptr_t) arg;
+    
+    int thread_time;
+    pthread_mutex_lock(&time_lock);
+    thread_time = curr_time;
+    pthread_mutex_unlock(&time_lock);
+
+    int sc; // submission count
+    Poisson_Random random_generator_staff(POISSON_MEAN_STAFF + random_generator.get_random_number());
+    while (1) {
+        // add random delay
+        int delay = random_generator_staff.get_random_number();
+        sleep(delay);
+        pthread_mutex_lock(&time_lock);
+        curr_time = max(curr_time, thread_time+delay);
+        thread_time = curr_time;
+        pthread_mutex_unlock(&time_lock);
+        
+        pthread_mutex_lock(&entry_read); // get exclusive access to rc
+        rc++; // one reader more now
+        if (rc == 1) {
+            sem_wait(&entry_book); // this is the first reader
+        }
+        pthread_mutex_unlock(&entry_read); // release exclusive access to rc
+
+        // read entry book
+        pthread_mutex_lock(&time_lock);
+        thread_time = curr_time;
+        pthread_mutex_unlock(&time_lock);
+
+        cout << "Staff " << staff_id << " has started reading the entry book at time " << thread_time << ". No. of submission = " << submit_cnt << endl;
+
+        pthread_mutex_lock(&entry_read); // get exclusive access to rc
+        rc--; // one reader fewer now
+        if (rc == 0) {
+            sem_post(&entry_book); // this is the last reader
+        }
+        pthread_mutex_unlock(&entry_read); // release exclusive access to rc
+    }
 }
 
 int main() {
@@ -239,6 +311,11 @@ int main() {
     pthread_t leaders[MAX_STUD_CNT];
     for (int i = 0; i < N/M; i++) {
         pthread_create(&leaders[i],NULL,leader_func,(void*)(i+1));
+    }
+
+    pthread_t staffs[STAFF_CNT];
+    for (int i = 0; i < STAFF_CNT; i++) {
+        pthread_create(&staffs[i],NULL,staff_func,(void*)(i+1));
     }
 
     pthread_exit(NULL);
