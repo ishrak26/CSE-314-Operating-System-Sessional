@@ -22,9 +22,19 @@ int y; // relative time unit for reading/writing
 int curr_time;
 
 pthread_mutex_t time_lock; // curr_time lock
-pthread_mutex_t ps_lock[PS_CNT]; // printing station locks
+pthread_mutex_t print_state_locks[PS_CNT];
+sem_t print_acquire[MAX_STUD_CNT];
 
 Poisson_Random random_generator;
+
+enum print_state {
+    NOT_ARRIVED,
+    WAITING,
+    PRINTING,
+    PRINTED
+};
+
+print_state print_states[MAX_STUD_CNT];
 
 /*
     Initialize all semaphore and mutex
@@ -34,7 +44,10 @@ void init_semaphore()
 	pthread_mutex_init(&time_lock,0);
     curr_time = 0;
     for (int i = 0; i < PS_CNT; i++) {
-        pthread_mutex_init(&ps_lock[i],0);
+        pthread_mutex_init(&print_state_locks[i],0);
+    }
+    for (int i = 0; i < N; i++) {
+        sem_init(&print_acquire[i],1,0);
     }
 }
 
@@ -42,8 +55,75 @@ void init_semaphore()
     returns print_station id for a student 
 */
 int get_ps_id(int sid) {
-    return (sid % 4) + 1;
+    return (sid % PS_CNT) + 1;
 } 
+
+int get_group_id_lower(int sid) {
+    int gid = (sid-1) / M;
+    return M * gid + 1;
+}
+
+int get_group_id_higher(int sid) {
+    int gid = (sid-1) / M;
+    return M * (gid + 1);
+}
+
+void test_print(int sid, int ps_id) {
+    bool flag = (print_states[sid-1] == WAITING);
+    for (int i = (ps_id+2)%4; i < N && flag; i += PS_CNT) {
+        if (print_states[i] == PRINTING) {
+            flag = false;
+            break;
+        } 
+    }
+    if (flag) {
+        print_states[sid-1] = PRINTING;
+        
+        // pthread_mutex_lock(&time_lock);
+        // int t = curr_time;
+        // pthread_mutex_unlock(&time_lock);
+        // cout << "Before sem_post: " << sid << " " << ps_id << " " << t << endl;
+        sem_post(&print_acquire[sid-1]);
+        // pthread_mutex_lock(&time_lock);
+        // t = curr_time;
+        // pthread_mutex_unlock(&time_lock);
+        // cout << "After sem_post: " << sid << " " << ps_id << " " << t << endl;
+    }
+}
+
+void acquire_printer(int sid, int ps_id) {
+    pthread_mutex_lock(&print_state_locks[ps_id-1]);
+    print_states[sid-1] = WAITING;
+    test_print(sid, ps_id);
+    pthread_mutex_unlock(&print_state_locks[ps_id-1]);
+    
+    // pthread_mutex_lock(&time_lock);
+    // int t = curr_time;
+    // pthread_mutex_unlock(&time_lock);
+    // cout << "Before sem_wait: " << sid << " " << ps_id << " " << t << endl;
+    sem_wait(&print_acquire[sid-1]);
+    // pthread_mutex_lock(&time_lock);
+    // t = curr_time;
+    // pthread_mutex_unlock(&time_lock);
+    // cout << "After sem_wait: " << sid << " " << ps_id << " " << t << endl;
+}
+
+void release_printer(int sid, int ps_id) {
+    pthread_mutex_lock(&print_state_locks[ps_id-1]);
+    print_states[sid-1] = PRINTED;
+    int lo = get_group_id_lower(sid);
+    int hi = get_group_id_higher(sid);
+    for (int i = lo; i <= hi; i++) {
+        test_print(i, get_ps_id(i));
+    }
+    for (int i = 1; i < lo; i++) {
+        test_print(i, get_ps_id(i));
+    }
+    for (int i = hi+1; i < N; i++) {
+        test_print(i, get_ps_id(i));
+    }
+    pthread_mutex_unlock(&print_state_locks[ps_id-1]);
+}
 
 void * student_func(void * arg) {
     int sid = (intptr_t) arg;
@@ -66,11 +146,13 @@ void * student_func(void * arg) {
 
     // try to print
     int ps_id = get_ps_id(sid);
-    pthread_mutex_lock(&ps_lock[ps_id-1]);
-    
+
+    acquire_printer(sid, ps_id);
+
     // time when he got the printer
     pthread_mutex_lock(&time_lock);
     thread_time = curr_time;
+    // cout << "Student " << sid << " has acquired printer at time " << thread_time << endl;
     pthread_mutex_unlock(&time_lock);
     
     // printing...
@@ -83,8 +165,7 @@ void * student_func(void * arg) {
     cout << "Student " << sid << " has finished printing at time " << thread_time << endl;
     pthread_mutex_unlock(&time_lock);
 
-    pthread_mutex_unlock(&ps_lock[ps_id-1]);
-
+    release_printer(sid, ps_id);
 }
 
 int main() {
