@@ -2,7 +2,7 @@
 #include<pthread.h>
 #include<semaphore.h>
 #include<unistd.h>
-#include <cstdint>
+#include<cstdint>
 
 #include "poisson_random.hpp"
 
@@ -10,6 +10,7 @@ using namespace std;
 
 #define PS_CNT 4 // no. of printing stations
 #define MAX_STUD_CNT 100 // max. no. of students
+#define BS_CNT 2 // no. of binding stations
 
 const double POISSON_MEAN = 3.0;
 
@@ -19,13 +20,14 @@ int w; // relative time unit for printing
 int x; // relative time unit for binding
 int y; // relative time unit for reading/writing
 
-int curr_time;
-
-pthread_mutex_t time_lock; // curr_time lock
-pthread_mutex_t print_state_locks[PS_CNT];
-sem_t print_acquire[MAX_STUD_CNT];
-
 Poisson_Random random_generator;
+
+int curr_time;
+pthread_mutex_t time_lock; // curr_time lock
+
+// printing
+pthread_mutex_t print_state_locks[PS_CNT]; // mutual exclusion of print state for each printing station
+sem_t print_acquire[MAX_STUD_CNT]; // one semaphore per student for printing
 
 enum print_state {
     NOT_ARRIVED,
@@ -34,11 +36,13 @@ enum print_state {
     PRINTED
 };
 
-print_state print_states[MAX_STUD_CNT];
+print_state print_states[MAX_STUD_CNT]; // print state for each student
 
-/*
-    Initialize all semaphore and mutex
-*/
+// binding
+sem_t bind_needed[MAX_STUD_CNT]; // one semaphore for each group leader
+sem_t bind_station; // semaphore for binding stations
+
+// Initialize all semaphore and mutex
 void init_semaphore()
 {
 	pthread_mutex_init(&time_lock,0);
@@ -49,80 +53,79 @@ void init_semaphore()
     for (int i = 0; i < N; i++) {
         sem_init(&print_acquire[i],1,0);
     }
+    for (int i = 0; i < N/M; i++) {
+        sem_init(&bind_needed[i],1,0);
+    }
+    sem_init(&bind_station,1,BS_CNT);
 }
 
-/*
-    returns print_station id for a student 
-*/
+
+// returns print_station id for a student 
 int get_ps_id(int sid) {
     return (sid % PS_CNT) + 1;
 } 
 
+// returns id of the first groupmate
 int get_group_id_lower(int sid) {
     int gid = (sid-1) / M;
     return M * gid + 1;
 }
 
+// returns id of the last groupmate
 int get_group_id_higher(int sid) {
     int gid = (sid-1) / M;
     return M * (gid + 1);
+}
+
+// returns group id for a student
+int get_group_id(int sid) {
+    return 1 + (sid-1) / M;
 }
 
 void test_print(int sid, int ps_id) {
     bool flag = (print_states[sid-1] == WAITING);
     for (int i = (ps_id+2)%4; i < N && flag; i += PS_CNT) {
         if (print_states[i] == PRINTING) {
+            // assigned printing station is occupied
             flag = false;
             break;
         } 
     }
     if (flag) {
+        // assigned printing station is available for use
         print_states[sid-1] = PRINTING;
-        
-        // pthread_mutex_lock(&time_lock);
-        // int t = curr_time;
-        // pthread_mutex_unlock(&time_lock);
-        // cout << "Before sem_post: " << sid << " " << ps_id << " " << t << endl;
         sem_post(&print_acquire[sid-1]);
-        // pthread_mutex_lock(&time_lock);
-        // t = curr_time;
-        // pthread_mutex_unlock(&time_lock);
-        // cout << "After sem_post: " << sid << " " << ps_id << " " << t << endl;
     }
 }
 
 void acquire_printer(int sid, int ps_id) {
-    pthread_mutex_lock(&print_state_locks[ps_id-1]);
-    print_states[sid-1] = WAITING;
-    test_print(sid, ps_id);
-    pthread_mutex_unlock(&print_state_locks[ps_id-1]);
-    
-    // pthread_mutex_lock(&time_lock);
-    // int t = curr_time;
-    // pthread_mutex_unlock(&time_lock);
-    // cout << "Before sem_wait: " << sid << " " << ps_id << " " << t << endl;
-    sem_wait(&print_acquire[sid-1]);
-    // pthread_mutex_lock(&time_lock);
-    // t = curr_time;
-    // pthread_mutex_unlock(&time_lock);
-    // cout << "After sem_wait: " << sid << " " << ps_id << " " << t << endl;
+    pthread_mutex_lock(&print_state_locks[ps_id-1]); // enter critical region
+    print_states[sid-1] = WAITING; // record fact that this student is waiting to print
+    test_print(sid, ps_id); // try to acquire printers if assigned printing station is not occupied
+    pthread_mutex_unlock(&print_state_locks[ps_id-1]); // exit critical region
+    sem_wait(&print_acquire[sid-1]); // block if printer could not be acquired
 }
 
 void release_printer(int sid, int ps_id) {
-    pthread_mutex_lock(&print_state_locks[ps_id-1]);
-    print_states[sid-1] = PRINTED;
-    int lo = get_group_id_lower(sid);
+    pthread_mutex_lock(&print_state_locks[ps_id-1]); // enter critical region
+    print_states[sid-1] = PRINTED; // this student has finished printing
+
+    // try to assign printer to own groupmates
+    int lo = get_group_id_lower(sid); 
     int hi = get_group_id_higher(sid);
     for (int i = lo; i <= hi; i++) {
         test_print(i, get_ps_id(i));
     }
+
+    // now assign to everyone else
     for (int i = 1; i < lo; i++) {
         test_print(i, get_ps_id(i));
     }
     for (int i = hi+1; i < N; i++) {
         test_print(i, get_ps_id(i));
     }
-    pthread_mutex_unlock(&print_state_locks[ps_id-1]);
+
+    pthread_mutex_unlock(&print_state_locks[ps_id-1]); // exit critical region
 }
 
 void * student_func(void * arg) {
@@ -144,7 +147,7 @@ void * student_func(void * arg) {
     cout << "Student " << sid << " has arrived at the print station at time " << thread_time << endl;
     pthread_mutex_unlock(&time_lock);
 
-    // try to print
+    // try to print following Dining Philosopher problem
     int ps_id = get_ps_id(sid);
 
     acquire_printer(sid, ps_id);
@@ -166,6 +169,42 @@ void * student_func(void * arg) {
     pthread_mutex_unlock(&time_lock);
 
     release_printer(sid, ps_id);
+
+    int gid = get_group_id(sid);
+    sem_post(&bind_needed[gid-1]); // notify the leader to bind
+}
+
+void * leader_func(void * arg) {
+    int gid = (intptr_t) arg; // group id for this leader
+    int thread_time;
+    
+    // wait for all group members to finish printing
+    for (int i = 0; i < M; i++) {
+        sem_wait(&bind_needed[gid-1]); // block if a student could not finish printing
+    }
+
+    pthread_mutex_lock(&time_lock);
+    thread_time = curr_time;
+    cout << "Group " << gid << " has finished printing at time " << thread_time << endl;
+    pthread_mutex_unlock(&time_lock);
+
+    sem_wait(&bind_station); // acquire a binding station, when free
+
+    pthread_mutex_lock(&time_lock);
+    thread_time = curr_time;
+    cout << "Group " << gid << " has started binding at time " << thread_time << endl;
+    pthread_mutex_unlock(&time_lock);
+
+    // binding...
+    sleep(x);
+
+    pthread_mutex_lock(&time_lock);
+    curr_time = max(curr_time, thread_time+x);
+    thread_time = curr_time;
+    cout << "Group " << gid << " has finished binding at time " << thread_time << endl;
+    pthread_mutex_unlock(&time_lock);
+
+    sem_post(&bind_station); // release binding station
 }
 
 int main() {
@@ -192,9 +231,14 @@ int main() {
 
     random_generator = Poisson_Random(POISSON_MEAN);
 
-    pthread_t student[MAX_STUD_CNT];
+    pthread_t students[MAX_STUD_CNT];
     for (int i = 0; i < N; i++) {
-        pthread_create(&student[i],NULL,student_func,(void*)(i+1));
+        pthread_create(&students[i],NULL,student_func,(void*)(i+1));
+    }
+
+    pthread_t leaders[MAX_STUD_CNT];
+    for (int i = 0; i < N/M; i++) {
+        pthread_create(&leaders[i],NULL,leader_func,(void*)(i+1));
     }
 
     pthread_exit(NULL);
