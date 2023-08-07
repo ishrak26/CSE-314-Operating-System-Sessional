@@ -9,20 +9,23 @@
 using namespace std;
 
 #define PS_CNT 4 // no. of printing stations
-#define MAX_STUD_CNT 100 // max. no. of students
+#define MAX_STUD_CNT 200 // max. no. of students
 #define BS_CNT 2 // no. of binding stations
 #define STAFF_CNT 2 // no. of library staffs
 
-const double POISSON_MEAN = 5.0;
-const double POISSON_MEAN_STAFF = 10.0;
+const double POISSON_MEAN = 5.0; // arrival of students at the printing station
+const double POISSON_MEAN_STAFF = 10.0; // periodical reading of the staffs
+const double POISSON_MEAN_RANDOM = 1.5; // random delay
 
-int N; // number of students
+const bool RANDOM_DELAY = true; // random delay to mimic real-world scenerio
+
+int N; // no. of students
 int M; // size of each group
 int w; // relative time unit for printing
 int x; // relative time unit for binding
 int y; // relative time unit for reading/writing
 
-Poisson_Random random_generator;
+Poisson_Random random_generator, random_delay_generator;
 
 int curr_time;
 pthread_mutex_t time_lock; // curr_time lock
@@ -45,10 +48,10 @@ sem_t bind_needed[MAX_STUD_CNT]; // one semaphore for each group leader
 sem_t bind_station; // semaphore for binding stations
 
 // submission
-int rc; // number of readers reading or wanting to
+int rc; // no. of readers reading or wanting to
 pthread_mutex_t entry_read; // controls access to rc
 sem_t entry_book; // controls access to entry book
-int submit_cnt;
+int submit_cnt; // no. of report submissions so far
 
 // Initialize all semaphore and mutex
 void init_semaphore()
@@ -101,6 +104,7 @@ int get_group_id(int sid) {
     return 1 + (sid-1) / M;
 }
 
+// test to acquire printer following dining philosopher problem
 void test_print(int sid, int ps_id) {
     bool flag = (print_states[sid-1] == WAITING);
     for (int i = (ps_id+2)%4; i < N && flag; i += PS_CNT) {
@@ -137,6 +141,7 @@ void release_printer(int sid, int ps_id) {
     }
 
     // now assign to everyone else
+    // ensure own groupmates are not repeated
     for (int i = 1; i < lo; i++) {
         test_print(i, get_ps_id(i));
     }
@@ -147,6 +152,7 @@ void release_printer(int sid, int ps_id) {
     pthread_mutex_unlock(&print_state_locks[ps_id-1]); // exit critical region
 }
 
+// thread function for a student
 void * student_func(void * arg) {
     int sid = (intptr_t) arg;
     int thread_time;
@@ -171,10 +177,24 @@ void * student_func(void * arg) {
 
     acquire_printer(sid, ps_id);
 
+    if (RANDOM_DELAY) {
+        pthread_mutex_lock(&time_lock);
+        thread_time = curr_time;
+        pthread_mutex_unlock(&time_lock);
+
+        delay = random_delay_generator.get_random_number();
+        sleep(delay);
+
+        pthread_mutex_lock(&time_lock);
+        curr_time = max(curr_time, thread_time+delay);
+        thread_time = curr_time;
+        pthread_mutex_unlock(&time_lock);
+    }
+
     // time when he got the printer
     pthread_mutex_lock(&time_lock);
     thread_time = curr_time;
-    // cout << "Student " << sid << " has acquired printer at time " << thread_time << endl;
+    cout << "Student " << sid << " has started printing at time " << thread_time << endl;
     pthread_mutex_unlock(&time_lock);
     
     // printing...
@@ -193,6 +213,7 @@ void * student_func(void * arg) {
     sem_post(&bind_needed[gid-1]); // notify the leader to bind
 }
 
+// thread function for a group leader
 void * leader_func(void * arg) {
     int gid = (intptr_t) arg; // group id for this leader
     int thread_time;
@@ -208,6 +229,20 @@ void * leader_func(void * arg) {
     pthread_mutex_unlock(&time_lock);
 
     sem_wait(&bind_station); // acquire a binding station, when free
+
+    if (RANDOM_DELAY) {
+        pthread_mutex_lock(&time_lock);
+        thread_time = curr_time;
+        pthread_mutex_unlock(&time_lock);
+
+        int delay = random_delay_generator.get_random_number();
+        sleep(delay);
+
+        pthread_mutex_lock(&time_lock);
+        curr_time = max(curr_time, thread_time+delay);
+        thread_time = curr_time;
+        pthread_mutex_unlock(&time_lock);
+    }
 
     pthread_mutex_lock(&time_lock);
     thread_time = curr_time;
@@ -247,6 +282,7 @@ void * leader_func(void * arg) {
     sem_post(&entry_book); // release exclusive access to entry book
 }
 
+// thread function for a library staff
 void * staff_func(void * arg) {
     int staff_id = (intptr_t) arg;
     
@@ -276,9 +312,8 @@ void * staff_func(void * arg) {
         // read entry book
         pthread_mutex_lock(&time_lock);
         thread_time = curr_time;
-        pthread_mutex_unlock(&time_lock);
-
         cout << "Staff " << staff_id << " has started reading the entry book at time " << thread_time << ". No. of submission = " << submit_cnt << endl;
+        pthread_mutex_unlock(&time_lock);
 
         // reading...
         sleep(y); 
@@ -302,6 +337,7 @@ void * staff_func(void * arg) {
 int main() {
     freopen("input.txt", "r", stdin);
     freopen("output.txt", "w", stdout);
+
     cin >> N >> M >> w >> x >> y;
 
     if (N <= 0 || M <= 0 || w < 0 || x < 0 || y < 0) {
@@ -315,13 +351,14 @@ int main() {
     }
 
     if (N % M != 0) {
-        cout << "M must be divisible by N" << endl;
+        cout << "N must be divisible by M" << endl;
         return 1;
     }
 
     init_semaphore();
 
     random_generator = Poisson_Random(POISSON_MEAN);
+    random_delay_generator = Poisson_Random(POISSON_MEAN_RANDOM);
 
     pthread_t students[MAX_STUD_CNT];
     for (int i = 0; i < N; i++) {

@@ -59,6 +59,9 @@ Offline 1 (Shell Script)/Workspace/target
 *.Identifier
 
 *.zip
+
+*/1905045/
+
 Offline 1 (Shell Script)/Workspace/submissions
 !Offline 1 (Shell Script)/Workspace/submissions/*.zip
 Offline 1 (Shell Script)/Workspace/1905045/
