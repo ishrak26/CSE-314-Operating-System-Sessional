@@ -227,9 +227,15 @@ void * leader_func(void * arg) {
 
     // submit 
     sem_wait(&entry_book); // get exclusive access to entry book
+    
+    // writing...
+    sleep(y);
+
     submit_cnt++;
 
+    // writing finished
     pthread_mutex_lock(&time_lock);
+    curr_time = max(curr_time, thread_time+y);
     thread_time = curr_time;
     cout << "Group " << gid << " has submitted the report at time " << thread_time << endl;
     pthread_mutex_unlock(&time_lock);
@@ -270,6 +276,16 @@ void * staff_func(void * arg) {
 
         cout << "Staff " << staff_id << " has started reading the entry book at time " << thread_time << ". No. of submission = " << submit_cnt << endl;
 
+        // reading...
+        sleep(y); 
+
+        pthread_mutex_lock(&time_lock);
+        curr_time = max(curr_time, thread_time+y);
+        thread_time = curr_time;
+        cout << "Staff " << staff_id << " has finished reading the entry book at time " << thread_time << ". No. of submission = " << submit_cnt << endl;
+        pthread_mutex_unlock(&time_lock);
+
+        // reading finished
         pthread_mutex_lock(&entry_read); // get exclusive access to rc
         rc--; // one reader fewer now
         if (rc == 0) {
