@@ -227,6 +227,10 @@ void * leader_func(void * arg) {
 
     // submit 
     sem_wait(&entry_book); // get exclusive access to entry book
+
+    pthread_mutex_lock(&time_lock);
+    thread_time = curr_time;
+    pthread_mutex_unlock(&time_lock);
     
     // writing...
     sleep(y);
