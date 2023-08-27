@@ -49,7 +49,7 @@ index a3c962b..ca673b4 100644
  void            uvmclear(pagetable_t, uint64);
  pte_t *         walk(pagetable_t, uint64, int);
 diff --git a/kernel/proc.c b/kernel/proc.c
-index 959b778..1f76866 100644
+index 959b778..de0088a 100644
 --- a/kernel/proc.c
 +++ b/kernel/proc.c
 @@ -12,8 +12,11 @@ struct proc proc[NPROC];
@@ -351,7 +351,7 @@ index 959b778..1f76866 100644
    release(&wait_lock);
  
    // Jump into the scheduler, never to return.
-@@ -681,3 +845,193 @@ procdump(void)
+@@ -681,3 +845,196 @@ procdump(void)
      printf("\n");
    }
  }
@@ -468,6 +468,7 @@ index 959b778..1f76866 100644
 +void
 +release_mutex_and_sleep(uint64 addr)
 +{
++  printf("addr is %p\n", addr);
 +  struct proc *p = myproc();
 +  
 +  // Must acquire p->lock in order to
@@ -484,6 +485,8 @@ index 959b778..1f76866 100644
 +    release(&p->lock);
 +    return;
 +  }
++
++  printf("after atomic copyout\n");
 +
 +  // Go to sleep.
 +  p->state = SLEEPING;
@@ -519,9 +522,9 @@ index 959b778..1f76866 100644
 +  //   s1 = &lk->locked
 +  //   amoswap.w zero, zero, (s1)
 +
-+  // printf("before sync lock release, addr %p, val %d\n", (uint8*)(pa0 + (dstva - va0)), *((uint8*)(pa0 + (dstva - va0))));
++  printf("before sync lock release, addr %p, val %d\n", (uint8*)(pa0 + (dstva - va0)), *((uint8*)(pa0 + (dstva - va0))));
 +  __sync_lock_release((uint8*)(pa0 + (dstva - va0)));
-+  // printf("after sync lock release, addr %p, val %d\n", (uint8*)(pa0 + (dstva - va0)), *((uint8*)(pa0 + (dstva - va0))));
++  printf("after sync lock release, addr %p, val %d\n", (uint8*)(pa0 + (dstva - va0)), *((uint8*)(pa0 + (dstva - va0))));
 +
 +  return 0;
 +}
@@ -765,10 +768,10 @@ index 9f69783..c824f5d 100644
  void
 diff --git a/user/producer_consumer.c b/user/producer_consumer.c
 new file mode 100644
-index 0000000..c35010e
+index 0000000..358ee0e
 --- /dev/null
 +++ b/user/producer_consumer.c
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,174 @@
 +#include "kernel/types.h"
 +#include "kernel/stat.h"
 +#include "user/user.h"
@@ -831,8 +834,16 @@ index 0000000..c35010e
 +	int i;
 +	for(i=1;i<=10;i++)
 +	{
++		thread_mutex_lock(&print_mx);
++        printf("new loop for producer\n");
++        thread_mutex_unlock(&print_mx);
++        
 +        // wait for semphore empty
 +        thread_semaphore_wait(&empty);
++
++        thread_mutex_lock(&print_mx);
++		printf("empty waited for producer\n");
++        thread_mutex_unlock(&print_mx);
 +
 +		// wait for mutex lock
 +		thread_mutex_lock(&mutex);
@@ -846,8 +857,20 @@ index 0000000..c35010e
 +		// unlock mutex lock
 +        thread_mutex_unlock(&mutex);
 +
++        thread_mutex_lock(&print_mx);
++		printf("mutex unlocked for producer\n");
++        thread_mutex_unlock(&print_mx);
++
 +		// post semaphore full
 +        thread_semaphore_post(&full);
++
++        thread_mutex_lock(&print_mx);
++		printf("full posted for producer\n");
++        thread_mutex_unlock(&print_mx);
++
++        thread_mutex_lock(&print_mx);
++        printf("producer done\n");
++        thread_mutex_unlock(&print_mx);
 +	}
 +    thread_exit();
 +}
@@ -861,8 +884,16 @@ index 0000000..c35010e
 +	int i;
 +	for(i=1;i<=10;i++)
 +	{	
++		thread_mutex_lock(&print_mx);
++        printf("new loop for consumer\n");
++        thread_mutex_unlock(&print_mx);
++        
 +        // wait for semphore full
 +        thread_semaphore_wait(&full);
++
++        thread_mutex_lock(&print_mx);
++		printf("full waited for consumer\n");
++        thread_mutex_unlock(&print_mx);
 +
 +		// wait for mutex lock
 + 		thread_mutex_lock(&mutex);
@@ -875,11 +906,19 @@ index 0000000..c35010e
 +        printf("consumer consumed item %d\n",item);
 +        thread_mutex_unlock(&print_mx);	
 +
++
 +		// unlock mutex lock
 +        thread_mutex_unlock(&mutex);
-+        
 +		// post semaphore empty		
 +        thread_semaphore_post(&empty);
++
++        thread_mutex_lock(&print_mx);
++		printf("empty posted for consumer\n");
++        thread_mutex_unlock(&print_mx);
++
++        thread_mutex_lock(&print_mx);
++        printf("consumer done\n");
++        thread_mutex_unlock(&print_mx);
 +	}
 +    thread_exit();
 +}
@@ -909,10 +948,10 @@ index 0000000..c35010e
 +}
 diff --git a/user/thread_cond.h b/user/thread_cond.h
 new file mode 100644
-index 0000000..e978c1f
+index 0000000..84922cf
 --- /dev/null
 +++ b/user/thread_cond.h
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,93 @@
 +#pragma once
 +
 +#include "kernel/types.h"
@@ -967,13 +1006,19 @@ index 0000000..e978c1f
 +
 +void thread_cond_signal(struct thread_cond *cv) {
 +    int pid;
++    printf("inside cond signal, before lock\n");
 +    thread_mutex_lock(&cv->mx);
++    printf("inside cond signal, after lock\n");
 +    pid = cond_queue_front(&cv->q);
 +    cond_queue_pop(&cv->q);
++    printf("inside cond signal, before unlock\n");
 +    thread_mutex_unlock(&cv->mx);
++    printf("inside cond signal, after unlock\n");
 +
 +    if (pid > 0) {
++        printf("inside cond signal, before wakeup %d\n", pid);
 +        wakeup_signal(pid);
++        printf("inside cond signal, after wakeup %d\n", pid);
 +    }
 +}
 +
@@ -981,15 +1026,23 @@ index 0000000..e978c1f
 +    int pid;
 +    pid = getpid();
 +    
++    printf("inside cond wait, before lock\n");
 +    thread_mutex_lock(&cv->mx);
++    printf("inside cond wait, after lock, before push %d\n", pid);
++
 +    cond_queue_push(&cv->q, pid);
++
 +    thread_mutex_unlock(&cv->mx);
 +
 +    m->pid = 0;
 +
++    printf("inside cond wait, before release for addr %p\n", &m->locked);
 +    release_mutex_and_sleep(&m->locked);
++    printf("inside cond wait, after release\n");
 +
++    printf("inside cond wait, before last lock\n");
 +    thread_mutex_lock(m);
++    printf("inside cond wait, after last lock\n");
 +}
 +
 diff --git a/user/thread_mutex.h b/user/thread_mutex.h
@@ -1084,10 +1137,10 @@ index 0000000..f583753
 +}
 diff --git a/user/thread_semaphore.h b/user/thread_semaphore.h
 new file mode 100644
-index 0000000..d992fe8
+index 0000000..9ad6ccf
 --- /dev/null
 +++ b/user/thread_semaphore.h
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,43 @@
 +#pragma once
 +
 +#include "kernel/types.h"
@@ -1107,19 +1160,29 @@ index 0000000..d992fe8
 +}
 +
 +void thread_semaphore_post(struct thread_semaphore *s) {
++    printf("inside post, before lock\n");
 +    thread_mutex_lock(&s->m);
++    printf("inside post, after lock\n");
 +    s->count++;
 +    thread_cond_signal(&s->cv); 
++    printf("inside post, after cond signal\n");
 +    thread_mutex_unlock(&s->m);
++    printf("inside post, after unlock\n");
 +}
 +
 +void thread_semaphore_wait(struct thread_semaphore *s) {
++    printf("inside wait, before lock\n");
 +    thread_mutex_lock(&s->m);
++    printf("inside wait, after lock\n");
 +    while (s->count <= 0) {
++        printf("inside wait, before cond wait\n");
 +        thread_cond_wait(&s->cv, &s->m); /*unlock mutex, wait, relock mutex */
++        printf("inside wait, after cond wait\n");
 +    }
++    printf("inside wait, after while loop\n");
 +    s->count--;
 +    thread_mutex_unlock(&s->m);
++    printf("inside wait, after unlock\n");
 +}
 diff --git a/user/thread_spin.h b/user/thread_spin.h
 new file mode 100644
@@ -1214,7 +1277,7 @@ index 0000000..accbe94
 +}
 diff --git a/user/threads.c b/user/threads.c
 new file mode 100644
-index 0000000..907824b
+index 0000000..050baff
 --- /dev/null
 +++ b/user/threads.c
 @@ -0,0 +1,83 @@
@@ -1267,7 +1330,7 @@ index 0000000..907824b
 +    }
 +  
 +    thread_mutex_lock(&print_mx);
-+    printf( "Done s:%s\n", b->name);
++    printf( "Done s:%x\n", b->name);
 +    thread_mutex_unlock(&print_mx);
 +
 +    thread_exit();
