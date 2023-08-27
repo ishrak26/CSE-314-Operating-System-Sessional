@@ -654,6 +654,42 @@ index 9f69783..c824f5d 100644
  // mark a PTE invalid for user access.
  // used by exec for the user stack guard page.
  void
+diff --git a/user/thread_mutex.h b/user/thread_mutex.h
+new file mode 100644
+index 0000000..7be1bcb
+--- /dev/null
++++ b/user/thread_mutex.h
+@@ -0,0 +1,30 @@
++#include "kernel/types.h"
++
++// Mutual exclusion lock.
++struct thread_mutex {
++  uint8 locked;       // Is the lock held?
++
++};
++
++void 
++thread_mutex_init(struct thread_mutex *lk)
++{
++  lk->locked = 0;
++}
++
++// Acquire the lock.
++void 
++thread_mutex_lock(struct thread_mutex *lk)
++{
++  while (lk->locked) {
++    sleep(1);
++  }
++  lk->locked = 1;
++}
++
++// Release the lock.
++void 
++thread_mutex_unlock(struct thread_mutex *lk)
++{
++  lk->locked = 0;
++}
 diff --git a/user/thread_spin.h b/user/thread_spin.h
 new file mode 100644
 index 0000000..53c1a62
@@ -746,14 +782,15 @@ index 0000000..53c1a62
 +}
 diff --git a/user/threads.c b/user/threads.c
 new file mode 100644
-index 0000000..3f80dd9
+index 0000000..e0bf839
 --- /dev/null
 +++ b/user/threads.c
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,77 @@
 +#include "kernel/types.h"
 +#include "kernel/stat.h"
 +#include "user/user.h"
 +#include "user/thread_spin.h"
++#include "user/thread_mutex.h"
 +
 +struct balance {
 +    char name[32];
@@ -763,6 +800,7 @@ index 0000000..3f80dd9
 +volatile int total_balance = 0;
 +
 +struct thread_spinlock lock;
++struct thread_mutex mlock;
 +
 +volatile unsigned int delay (unsigned int d) {
 +   unsigned int i; 
@@ -782,15 +820,14 @@ index 0000000..3f80dd9
 +
 +    for (i = 0; i < b->amount; i++) { 
 +        // lock and mlock will be implemented by you.
-+         thread_spin_lock(&lock);
-+         // thread_mutex_lock(&mlock);
++        //  thread_spin_lock(&lock);
++         thread_mutex_lock(&mlock);
 +         old = total_balance;
 +         delay(100000);
 +	 // if(old != total_balance)  printf("we will miss an update. old: %d total_balance: %d\n", old, total_balance);
 +         total_balance = old + 1;
-+         thread_spin_unlock(&lock);
-+         // thread_mutex_lock(&mlock);
-+
++        //  thread_spin_unlock(&lock);
++         thread_mutex_unlock(&mlock);
 +    }
 +  
 +    printf( "Done s:%x\n", b->name);
@@ -805,6 +842,7 @@ index 0000000..3f80dd9
 +  struct balance b2 = {"b2", 2800};
 + 
 +    thread_spin_init(&lock);
++    thread_mutex_init(&mlock);
 +
 +  void *s1, *s2;
 +  int thread1, thread2, r1, r2;
